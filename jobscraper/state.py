@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 _lock = threading.RLock()
+_connections: dict[str, sqlite3.Connection] = {}
 
 
 def now_iso() -> str:
@@ -65,11 +66,17 @@ class State:
         settings = load_settings()
         settings.ensure_dirs()
         self.path = path or settings.state_db_path
-        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
-        self.conn.row_factory = sqlite3.Row
         with _lock:
-            self.conn.executescript(_SCHEMA)
-            self.conn.commit()
+            # One shared connection per database file (State() is created often).
+            key = str(Path(self.path).resolve())
+            conn = _connections.get(key)
+            if conn is None:
+                conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
+                conn.row_factory = sqlite3.Row
+                conn.executescript(_SCHEMA)
+                conn.commit()
+                _connections[key] = conn
+            self.conn = conn
 
     @contextmanager
     def tx(self):
