@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "jobscraper": {
+      "command": "D:\Company-JobScrapper\jobs\Scripts\python.exe",
+      "args": ["-m", "jobscraper", "serve"],
+      "cwd": "D:\Company-JobScrapper"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# systemd unit — run the scheduler as a service on a Linux server / VM.
+#
+#   sudo cp deploy/jobscraper.service /etc/systemd/system/jobscraper.service
+#   sudo nano /etc/systemd/system/jobscraper.service   # fix User and paths
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now jobscraper
+#   journalctl -u jobscraper -f                        # live logs
+[Unit]
+Description=Company job scraper (scans, LeetCode company sync, 21:00 IST Gmail digest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/Company-JobScrapper
+ExecStart=/home/youruser/Company-JobScrapper/jobs/bin/python -m jobscraper daemon
+# Or run the MCP server over HTTP with the scheduler inside:
+# ExecStart=/home/youruser/Company-JobScrapper/jobs/bin/python -m jobscraper serve --transport streamable-http --with-scheduler
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

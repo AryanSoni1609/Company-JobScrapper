@@ -1,0 +1,11 @@
+# Alternative to the long-running daemon: let cron trigger each step.
+# crontab -e, then paste (adjust the path). Times are in the server's timezone;
+# CRON_TZ makes them India time.
+CRON_TZ=Asia/Kolkata
+REPO=/home/youruser/Company-JobScrapper
+# scan every 6 hours
+0 */6 * * *  cd $REPO && jobs/bin/python -m jobscraper scan            >> logs/cron.log 2>&1
+# detect new LeetCode-list companies every night at 02:00
+0 2 * * *    cd $REPO && jobs/bin/python -m jobscraper sync-companies  >> logs/cron.log 2>&1
+# fresh scan + Gmail digest at 21:00 IST
+0 21 * * *   cd $REPO && jobs/bin/python -m jobscraper nightly         >> logs/cron.log 2>&1

@@ -1,0 +1,30 @@
+# docker compose up -d   — run the scraper + MCP server continuously.
+# Put .env, google_credentials.json, gmail_token.json (create it locally first with
+# `python -m jobscraper gmail-auth`), job_preference.md and resume_details.md next to
+# this file. Paths inside .env should then point to /app/secrets/... (see below).
+services:
+  jobscraper:
+    build: .
+    image: jobscraper:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      GOOGLE_CREDENTIALS_PATH: /app/secrets/google_credentials.json
+      GMAIL_CREDENTIALS_PATH: /app/secrets/gmail_credentials.json
+      GMAIL_TOKEN_PATH: /app/secrets/gmail_token.json
+      JOB_PREFERENCE_PATH: /app/job_preference.md
+      RESUME_DETAILS_PATH: /app/resume_details.md
+      TZ: Asia/Kolkata
+    volumes:
+      - ./google_credentials.json:/app/secrets/google_credentials.json:ro
+      - ./gmail_token.json:/app/secrets/gmail_token.json
+      - ./job_preference.md:/app/job_preference.md
+      - ./resume_details.md:/app/resume_details.md:ro
+      - ./data:/app/data
+      - ./resumes:/app/resumes
+      - ./logs:/app/logs
+      - ./output:/app/output
+    # MCP endpoint at http://localhost:8765/mcp — bound to localhost only.
+    # Put a reverse proxy with authentication in front before exposing it.
+    ports:
+      - "127.0.0.1:8765:8765"

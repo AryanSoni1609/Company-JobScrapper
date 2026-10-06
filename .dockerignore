@@ -1,0 +1,15 @@
+.git
+jobs/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+*.json
+data/
+output/
+resumes/
+logs/
+resume_details.md
+job_preference.md
+templates/resume_template.docx

@@ -5,6 +5,7 @@ gmail_credentials.json
 gmail_token.json
 *.json
 !.vscode/*.json
+!deploy/*.example.json
 
 # Personal resume details, resume template and job preferences
 # (commit only the *.example.* versions)
