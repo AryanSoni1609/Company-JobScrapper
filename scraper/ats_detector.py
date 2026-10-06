@@ -24,9 +24,10 @@ import csv
 import os
 import sys
 import time
-import re
 import argparse
-import requests
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import jobscraper.config  # noqa: E402,F401  -- loads .env into the environment
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -44,173 +45,25 @@ SHEET_NAME       = "Companies"
 # requiring at least 1 job eliminates these false positives.
 MIN_JOBS_REQUIRED = 1
 
-REQUEST_TIMEOUT = 10
-API_DELAY       = 0.3  # seconds between API calls
 
 
-def generate_token_variations(company_name):
-    """
-    Generate possible ATS board token variations from a company name.
-    Returns a list ordered from most to least likely.
-    Most ATS platforms prefer lowercase tokens; Ashby tokens are case-sensitive.
-    """
-    name       = company_name.strip()
-    variations = []
-    seen       = set()
+# Detection logic lives in jobscraper/ats_detect.py so this script, the
+# queue processor and the LeetCode company sync all behave the same way.
+from jobscraper import ats_detect  # noqa: E402
 
-    def add(token):
-        if token and token not in seen:
-            variations.append(token)
-            seen.add(token)
-
-    # Lowercase first (most likely to work for Greenhouse, Lever, SmartRecruiters)
-    lower_no_spaces = re.sub(r'[^a-z0-9]', '', name.lower())
-    add(lower_no_spaces)
-    add(name.lower())
-    add(name.lower().replace(" ", "-"))
-    add(re.sub(r'[^a-z0-9\-]', '', name.lower()))
-
-    # Original casing (needed for Ashby case-sensitive tokens)
-    add(re.sub(r'\s+', '', name))   # e.g. "Aleph Alpha" -> "AlephAlpha"
-    add(name)                        # e.g. "DeepL" -> "DeepL"
-
-    # Suffix removal
-    for suffix in [" GmbH", " AG", " SE", " Inc", " Inc.", " Ltd", " Ltd.",
-                   " Co.", " Group", " Labs", " AI", " HQ", " IO",
-                   " Invent", " Digital", " Capital"]:
-        if name.lower().endswith(suffix.lower()):
-            stripped = name[:len(name) - len(suffix)].strip()
-            add(stripped.lower())
-            add(re.sub(r'[^a-z0-9]', '', stripped.lower()))
-            add(re.sub(r'\s+', '', stripped))
-
-    # CamelCase
-    words = name.split()
-    if len(words) > 1:
-        add("".join(w.capitalize() for w in words))
-
-    # Common corporate token suffixes
-    for corp_suffix in ["gmbh", "group", "bv", "global"]:
-        add(lower_no_spaces + corp_suffix)
-
-    # "The " prefix removal
-    if name.lower().startswith("the "):
-        short = name[4:]
-        add(short.lower())
-        add(re.sub(r'[^a-z0-9]', '', short.lower()))
-
-    return variations
-
-
-def try_greenhouse(token):
-    """Returns (success, job_count, career_url) for Greenhouse."""
-    url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            jobs = resp.json().get("jobs", [])
-            return True, len(jobs), f"https://boards.greenhouse.io/{token}"
-    except Exception:
-        pass
-    return False, 0, ""
-
-
-def try_lever(token):
-    """Returns (success, job_count, career_url) for Lever."""
-    url = f"https://api.lever.co/v0/postings/{token}?mode=json"
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, list):
-                return True, len(data), f"https://jobs.lever.co/{token}"
-    except Exception:
-        pass
-    return False, 0, ""
-
-
-def try_ashby(token):
-    """Returns (success, job_count, career_url) for Ashby.
-    Uses the official REST API — NOT the old GraphQL endpoint.
-    """
-    url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            data = resp.json()
-            jobs = data.get("jobs", [])
-            return True, len(jobs), f"https://jobs.ashbyhq.com/{token}"
-    except Exception:
-        pass
-    return False, 0, ""
-
-
-def try_smartrecruiters(token):
-    """Returns (success, job_count, career_url) for SmartRecruiters.
-    NOTE: SR returns HTTP 200 with 0 jobs for any company name —
-    MIN_JOBS_REQUIRED=1 prevents counting these as matches.
-    """
-    url = f"https://api.smartrecruiters.com/v1/companies/{token}/postings"
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 200:
-            jobs = resp.json().get("content", [])
-            return True, len(jobs), f"https://careers.smartrecruiters.com/{token}"
-    except Exception:
-        pass
-    return False, 0, ""
-
-
-ATS_DETECTORS = {
-    "greenhouse":      try_greenhouse,
-    "lever":           try_lever,
-    "ashby":           try_ashby,
-    "smartrecruiters": try_smartrecruiters,
-}
+generate_token_variations = ats_detect.token_variations
 
 
 def detect_ats(company_name):
     """
-    Try all ATS platforms with all token variations.
+    Try all ATS platforms with token variations of the company name.
     Only counts as a match if at least MIN_JOBS_REQUIRED jobs are returned.
     Returns dict with: ats_type, board_token, career_url, job_count, active, notes
     """
-    variations  = generate_token_variations(company_name)
-    all_matches = []
-
-    for token in variations:
-        for ats_name, detector_fn in ATS_DETECTORS.items():
-            success, job_count, career_url = detector_fn(token)
-            time.sleep(API_DELAY)
-
-            if success and job_count >= MIN_JOBS_REQUIRED:
-                all_matches.append({
-                    "ats_type":   ats_name,
-                    "board_token": token,
-                    "career_url": career_url,
-                    "job_count":  job_count,
-                })
-                print(f"  >> FOUND: {ats_name} with token '{token}' ({job_count} jobs)")
-
-        if all_matches:
-            break  # stop trying more tokens once we have a match
-
-    if not all_matches:
-        return {
-            "ats_type": "", "board_token": "", "career_url": "", "job_count": 0,
-            "active": "NO",
-            "notes": "No supported ATS found",
-        }
-
-    best = max(all_matches, key=lambda r: r["job_count"])
-    return {
-        "ats_type":    best["ats_type"],
-        "board_token": best["board_token"],
-        "career_url":  best["career_url"],
-        "job_count":   best["job_count"],
-        "active": "YES",
-        "notes": f"Auto-detected. {best['job_count']} jobs found.",
-    }
+    result = ats_detect.detect_ats(company_name, max_variations=20)
+    if result["active"] == "YES":
+        print(f"  >> FOUND: {result['ats_type']} with token '{result['board_token']}' ({result['job_count']} jobs)")
+    return result
 
 
 def load_input_companies(input_file):

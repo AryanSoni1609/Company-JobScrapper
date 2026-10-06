@@ -29,7 +29,6 @@ import sys
 import csv
 import time
 import argparse
-import requests
 import os
 from pathlib import Path
 import gspread
@@ -53,7 +52,6 @@ HEADERS = [
     "category", "scope_tags", "active", "notes", "job_count", "detected_date"
 ]
 
-MIN_JOBS = 1   # must return at least this many jobs to count as valid
 
 
 # ── GOOGLE SHEETS HELPERS ────────────────────────────────────────────────────
@@ -108,83 +106,9 @@ def append_rows_to_tab(ws, rows, batch_size=50):
 
 # ── ATS DETECTION ────────────────────────────────────────────────────────────
 
-def make_token_variations(name):
-    """Generate token candidates from a company name."""
-    import re
-    base = name.strip()
-
-    suffixes = [
-        r"\s+(GmbH|AG|SE|KG|OHG|UG|BV|NV|SAS|SRL|Ltd|LLC|Inc|Corp|Co\.|Group|Holding|Technologies|Technology|Solutions|Software|Labs|Studio|Studios|AI|io)\.?$"
-    ]
-    cleaned = base
-    for pat in suffixes:
-        cleaned = re.sub(pat, "", cleaned, flags=re.IGNORECASE).strip()
-
-    variations = []
-    for s in [cleaned, base]:
-        lower   = s.lower()
-        nospace = re.sub(r"\s+", "", lower)
-        hyphen  = re.sub(r"\s+", "-", lower)
-        nopunct = re.sub(r"[^a-z0-9]", "", lower)
-        camel   = re.sub(r"\s+", "", s)
-
-        for v in [lower, nospace, hyphen, nopunct, camel]:
-            if v and v not in variations:
-                variations.append(v)
-
-    return variations
-
-
-def try_greenhouse(token):
-    for url in [
-        f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
-        f"https://job-boards.eu.greenhouse.io/{token}/jobs",
-    ]:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                jobs = r.json().get("jobs", [])
-                if len(jobs) >= MIN_JOBS:
-                    return token, f"https://boards.greenhouse.io/{token}", len(jobs)
-        except Exception:
-            pass
-    return None
-
-
-def try_lever(token):
-    url = f"https://api.lever.co/v0/postings/{token}?mode=json"
-    try:
-        r    = requests.get(url, timeout=10)
-        jobs = r.json()
-        if r.status_code == 200 and isinstance(jobs, list) and len(jobs) >= MIN_JOBS:
-            return token, f"https://jobs.lever.co/{token}", len(jobs)
-    except Exception:
-        pass
-    return None
-
-
-def try_ashby(token):
-    url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
-    try:
-        r    = requests.get(url, timeout=10)
-        jobs = r.json().get("jobs", []) if r.status_code == 200 else []
-        if len(jobs) >= MIN_JOBS:
-            return token, f"https://jobs.ashbyhq.com/{token}", len(jobs)
-    except Exception:
-        pass
-    return None
-
-
-def try_smartrecruiters(token):
-    url = f"https://api.smartrecruiters.com/v1/companies/{token}/postings"
-    try:
-        r    = requests.get(url, timeout=10)
-        jobs = r.json().get("content", []) if r.status_code == 200 else []
-        if len(jobs) >= MIN_JOBS:
-            return token, f"https://careers.smartrecruiters.com/{token}", len(jobs)
-    except Exception:
-        pass
-    return None
+# Detection logic lives in jobscraper/ats_detect.py (shared with the
+# LeetCode company sync and scraper/ats_detector.py).
+from jobscraper import ats_detect  # noqa: E402
 
 
 def detect_ats(company_name):
@@ -192,21 +116,10 @@ def detect_ats(company_name):
     Try all ATS platforms with all token variations.
     Returns (ats_type, token, career_url, job_count) or None.
     """
-    variations = make_token_variations(company_name)
-    checkers   = [
-        ("greenhouse",      try_greenhouse),
-        ("ashby",           try_ashby),
-        ("lever",           try_lever),
-        ("smartrecruiters", try_smartrecruiters),
-    ]
-    for token in variations:
-        for ats_name, fn in checkers:
-            result = fn(token)
-            if result:
-                found_token, career_url, job_count = result
-                return ats_name, found_token, career_url, job_count
-            time.sleep(0.2)
-    return None
+    r = ats_detect.detect_ats(company_name, max_variations=20)
+    if r["active"] != "YES":
+        return None
+    return r["ats_type"], r["board_token"], r["career_url"], r["job_count"]
 
 
 # ── STEP 1: Upload No-ATS history ────────────────────────────────────────────
