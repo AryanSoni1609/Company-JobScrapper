@@ -263,3 +263,40 @@ def fetch_company_jobs(company: str, ats: str, token: str, prefs: Preferences):
     if fetcher is None:
         return [], f"UNSUPPORTED: {ats}"
     return fetcher(company, token, prefs)
+
+
+# ── single posting by URL (used by the MCP get_job_description tool) ────────
+
+_URL_PATTERNS = [
+    ("greenhouse", re.compile(r"(?:job-)?boards(?:\.eu)?\.greenhouse\.io/(?:embed/job_app\?for=)?([\w.-]+)/jobs/(\d+)")),
+    ("lever", re.compile(r"jobs(?:\.eu)?\.lever\.co/([\w.-]+)/([0-9a-f-]{36})")),
+    ("ashby", re.compile(r"jobs\.ashbyhq\.com/([\w.%-]+)/([0-9a-f-]{36})")),
+    ("smartrecruiters", re.compile(r"jobs\.smartrecruiters\.com/([\w.-]+)/(\d+)")),
+]
+
+
+def fetch_job_by_url(url: str, prefs: Preferences) -> dict | None:
+    """Fetch one posting (with full description) from its public URL.
+
+    Supports Greenhouse, Lever, Ashby and SmartRecruiters URLs; any other
+    page is downloaded and reduced to plain text as a best effort.
+    """
+    for ats, pattern in _URL_PATTERNS:
+        m = pattern.search(url)
+        if not m:
+            continue
+        token, job_id = m.group(1), m.group(2)
+        if ats == "smartrecruiters":
+            job = _job(job_id=job_id, url=url, apply_url=url, ats=ats, board_token=token, company=token)
+            return enrich_details(job)
+        jobs, status = fetch_company_jobs(token, ats, token, prefs)
+        for j in jobs:
+            if j["job_id"] == job_id:
+                return j
+        return None
+    resp = _session.get(url, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    body = re.sub(r"(?is)<(script|style|nav|footer|header)[^>]*>.*?</\1>", " ", resp.text)
+    title = re.search(r"(?is)<title[^>]*>(.*?)</title>", resp.text)
+    return _job(title=strip_html(title.group(1)) if title else "", url=url, apply_url=url,
+                description=strip_html(body)[:20_000], ats="web")

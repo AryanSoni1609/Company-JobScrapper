@@ -8,6 +8,7 @@ Commands:
     nightly          scan, then send the digest (what the 21:00 schedule runs)
     gmail-auth       one-time Gmail OAuth consent (EMAIL_METHOD=gmail_api)
     daemon           run forever: scans, company sync and the 21:00 digest on schedule
+    serve            start the MCP server (stdio by default; --with-scheduler to run autonomously)
     make-template    write a starter Word template (templates/resume_template.docx)
     status           show local state counters and the active preferences
 """
@@ -48,9 +49,21 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("daemon", help="run the scheduler in the foreground")
 
+    p = sub.add_parser("serve", help="start the MCP server")
+    p.add_argument("--transport", choices=["stdio", "streamable-http", "sse"], default=None,
+                   help="default: MCP_TRANSPORT from .env (stdio)")
+    p.add_argument("--host", default=None)
+    p.add_argument("--port", type=int, default=None)
+    p.add_argument("--with-scheduler", action="store_true",
+                   help="also run scans, company sync and the 21:00 digest inside the server")
+
     sub.add_parser("status", help="show state counters and preferences")
 
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        from .mcp_server import serve
+        serve(args.transport, args.with_scheduler, args.host, args.port)
+        return 0
     setup_logging()
 
     if args.command == "sync-companies":

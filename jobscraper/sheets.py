@@ -28,6 +28,9 @@ JOB_HEADERS = ["date_added", "company", "title", "role_category", "location", "e
                "salary", "date_posted", "ats", "job_url", "apply_url", "match_score",
                "matched_keywords", "resume_file", "status", "job_id"]
 
+APPLICATION_HEADERS = ["timestamp", "company", "title", "status", "job_url", "apply_url",
+                       "resume_file", "note"]
+
 
 class SheetsNotConfigured(RuntimeError):
     pass

@@ -52,6 +52,7 @@ class Settings:
     companies_tab: str
     no_ats_tab: str
     jobs_tab: str
+    applications_tab: str
 
     # Email
     email_method: str
@@ -119,6 +120,7 @@ def load_settings() -> Settings:
         companies_tab=_env("SHEET_COMPANIES_TAB", "Companies"),
         no_ats_tab=_env("SHEET_NO_ATS_TAB", "Companies with no ATS"),
         jobs_tab=_env("SHEET_JOBS_TAB", "Jobs"),
+        applications_tab=_env("SHEET_APPLICATIONS_TAB", "Applications"),
         email_method=_env("EMAIL_METHOD", "gmail_api").lower(),
         email_to=_env("NOTIFY_EMAIL_TO"),
         email_from=_env("NOTIFY_EMAIL_FROM"),
@@ -160,6 +162,7 @@ def setup_logging(name: str = "jobscraper", to_stderr: bool = True) -> logging.L
     root = logging.getLogger("jobscraper")
     if not root.handlers:
         root.setLevel(logging.INFO)
+        root.propagate = False  # avoid duplicate lines when a host (e.g. MCP) logs to root too
         fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
         fh = logging.FileHandler(settings.log_dir / "jobscraper.log", encoding="utf-8")
         fh.setFormatter(fmt)

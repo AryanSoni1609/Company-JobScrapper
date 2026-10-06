@@ -13,7 +13,7 @@ from datetime import date
 from .ats_detect import detect_many
 from .config import load_settings
 from .leetcode import fetch_company_names
-from .sheets import COMPANY_HEADERS, JOB_HEADERS, AppendOnlySheets, SheetsNotConfigured
+from .sheets import APPLICATION_HEADERS, COMPANY_HEADERS, JOB_HEADERS, AppendOnlySheets, SheetsNotConfigured
 from .state import State, now_iso
 
 log = logging.getLogger("jobscraper.pipeline")
@@ -245,3 +245,15 @@ def run_nightly() -> dict:
         result["scan"] = {"error": str(e)}
     result["digest"] = send_digest(send_if_empty=settings.digest_send_empty)
     return result
+
+
+def log_application(job: dict, status: str, note: str = "") -> None:
+    """Append an application status change to the Applications tab (never edits the Jobs tab)."""
+    sheets = _sheets_or_none()
+    if not sheets:
+        return
+    sheets.append(load_settings().applications_tab, APPLICATION_HEADERS, [{
+        "timestamp": now_iso(), "company": job.get("company", ""), "title": job.get("title", ""),
+        "status": status, "job_url": job.get("job_url") or job.get("url", ""),
+        "apply_url": job.get("apply_url", ""), "resume_file": job.get("resume_path", ""), "note": note,
+    }])
