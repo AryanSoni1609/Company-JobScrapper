@@ -3,6 +3,8 @@
 Commands:
     sync-companies   detect ATS for new LeetCode-list companies, append to sheet
     scan             scrape active companies, append new matching jobs to the Jobs tab
+    tailor           (re)build the tailored resume for a tracked job URL
+    make-template    write a starter Word template (templates/resume_template.docx)
     status           show local state counters and the active preferences
 """
 
@@ -27,6 +29,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("scan", help="scrape companies and append new matching jobs")
     p.add_argument("--company", action="append", help="only scan this company (repeatable)")
 
+    p = sub.add_parser("tailor", help="(re)build the tailored resume for a tracked job")
+    p.add_argument("job_url")
+
+    p = sub.add_parser("make-template", help="write a starter docxtpl Word template")
+    p.add_argument("--path", default="templates/resume_template.docx")
+
     sub.add_parser("status", help="show state counters and preferences")
 
     args = parser.parse_args(argv)
@@ -38,6 +46,18 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "scan":
         from .pipeline import scan_jobs
         result = scan_jobs(company_filter=args.company)
+    elif args.command == "tailor":
+        from .pipeline import tailor_existing_job
+        result = tailor_existing_job(args.job_url)
+    elif args.command == "make-template":
+        from pathlib import Path
+
+        from .config import REPO_ROOT
+        from .resume import make_starter_template
+        path = Path(args.path)
+        path = make_starter_template(path if path.is_absolute() else REPO_ROOT / path)
+        result = {"template": str(path),
+                  "next_step": f"Restyle it in Word, then set RESUME_TEMPLATE_PATH={args.path} in .env"}
     elif args.command == "status":
         from .preferences import load_preferences
         from .state import State

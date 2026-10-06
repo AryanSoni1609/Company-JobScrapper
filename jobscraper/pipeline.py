@@ -95,6 +95,47 @@ def sync_companies(batch_size: int | None = None, names: list[str] | None = None
     return summary
 
 
+def tailor_jobs(jobs: list[dict]) -> int:
+    """Write a tailored resume for each job (sets match_score, matched_keywords,
+    missing_keywords and resume_file on the dicts). Returns how many were written."""
+    from .resume import load_resume, tailor_for_job
+
+    if not jobs:
+        return 0
+    try:
+        resume = load_resume()
+    except FileNotFoundError as e:
+        log.warning("Skipping resume tailoring: %s", e)
+        return 0
+    done = 0
+    for job in jobs:
+        try:
+            tailored, path = tailor_for_job(job, resume)
+        except Exception as e:  # noqa: BLE001 — one bad JD must not stop the scan
+            log.warning("Could not tailor resume for %s: %s", job.get("url"), e)
+            continue
+        job["match_score"] = tailored.match_score
+        job["matched_keywords"] = ", ".join(tailored.matched_keywords[:20])
+        job["missing_keywords"] = ", ".join(tailored.missing_keywords[:15])
+        job["resume_file"] = str(path)
+        done += 1
+    return done
+
+
+def tailor_existing_job(job_url: str) -> dict:
+    """(Re)generate the tailored resume for a job already tracked in state."""
+    state = State()
+    job = state.get_job(job_url)
+    if not job:
+        return {"error": f"Job not found in local state: {job_url}"}
+    job.setdefault("url", job_url)
+    if tailor_jobs([job]) == 0:
+        return {"error": "Resume could not be tailored (is resume_details.md present?)"}
+    state.set_job_resume(job_url, job["resume_file"])
+    return {k: job[k] for k in ("title", "company", "match_score", "matched_keywords",
+                                "missing_keywords", "resume_file")}
+
+
 def _scan_targets(sheets: AppendOnlySheets | None, state: State) -> list[dict]:
     """Active companies from the sheet plus any detected locally but not on the sheet yet."""
     targets: dict[str, dict] = {}
@@ -153,6 +194,8 @@ def scan_jobs(company_filter: list[str] | None = None) -> dict:
                 known.add(job["url"])
                 new_jobs.append(job)
 
+    tailored_count = tailor_jobs(new_jobs)
+
     today = date.today().isoformat()
     rows = []
     for job in new_jobs:
@@ -178,6 +221,7 @@ def scan_jobs(company_filter: list[str] | None = None) -> dict:
         "companies_scanned": scanned,
         "postings_seen": total_postings,
         "new_matching_jobs": len(new_jobs),
+        "resumes_tailored": tailored_count,
         "errors": errors[:25],
         "sheet_updated": bool(sheets and rows),
         "new_jobs": [f"{j['company']}: {j['title']} ({j['location']})" for j in new_jobs[:50]],
