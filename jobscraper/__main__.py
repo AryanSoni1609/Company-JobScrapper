@@ -102,8 +102,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status":
         from .preferences import load_preferences
         from .state import State
+        from .config import load_settings
         prefs = load_preferences()
-        result = {**State().stats(), "preferences_file": prefs.source_path, "preferences": prefs.summary()}
+        settings = load_settings()
+        result = {**State().stats(), "preferences_file": prefs.source_path, "preferences": prefs.summary(),
+                  "sheets_configured": settings.sheets_configured,
+                  "resume_details_present": settings.resume_details_path.is_file(),
+                  "email_method": settings.email_method, "email_to": settings.email_to or "(not set)",
+                  "digest_time": f"{settings.digest_time} {settings.timezone}"}
     else:  # pragma: no cover
         parser.error(f"unknown command {args.command}")
         return 2
