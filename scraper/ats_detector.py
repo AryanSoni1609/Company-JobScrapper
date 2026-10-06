@@ -318,53 +318,43 @@ def upload_to_google_sheet(confirmed_companies):
     existing_data  = ws.get_all_records()
     existing_names = {row.get("company_name", "").strip().lower() for row in existing_data}
 
-    new_companies     = []
-    updated_companies = []
+    new_companies = []
+    ats_changed   = []
 
     for company in confirmed_companies:
         name_lower = company["company_name"].strip().lower()
 
         if name_lower in existing_names:
-            for i, existing in enumerate(existing_data):
-                if existing.get("company_name", "").strip().lower() == name_lower:
-                    old_ats   = existing.get("ats_type",    "").strip().lower()
-                    old_token = existing.get("board_token", "").strip().lower()
-                    new_ats   = company["ats_type"].lower()
-                    new_token = company["board_token"].lower()
-
-                    if old_ats != new_ats or old_token != new_token:
-                        row_num = i + 2
-                        ws.update_cell(row_num, 2, company["career_url"])
-                        ws.update_cell(row_num, 3, company["ats_type"])
-                        ws.update_cell(row_num, 4, company["board_token"])
-                        ws.update_cell(row_num, 7, "YES")
-                        ws.update_cell(row_num, 8, f"ATS updated: {old_ats}/{old_token} -> {new_ats}/{new_token}")
-                        updated_companies.append(company["company_name"])
-                        print(f"  UPDATED: {company['company_name']} ({old_ats} -> {new_ats})")
-                        time.sleep(1)
+            # Append-only: existing rows are never modified. If the ATS changed,
+            # report it so the row can be fixed by hand.
+            for existing in existing_data:
+                if str(existing.get("company_name", "")).strip().lower() == name_lower:
+                    old_ats   = str(existing.get("ats_type",    "")).strip().lower()
+                    old_token = str(existing.get("board_token", "")).strip().lower()
+                    if old_ats != company["ats_type"].lower() or old_token != company["board_token"].lower():
+                        ats_changed.append(company)
+                        print(f"  ATS CHANGED (not modified): {company['company_name']} "
+                              f"{old_ats}/{old_token} -> {company['ats_type']}/{company['board_token']}")
                     break
         else:
             new_companies.append(company)
 
     if new_companies:
-        all_values = ws.get_all_values()
-        next_row   = len(all_values) + 1
+        rows = [[
+            company["company_name"], company["career_url"],
+            company["ats_type"],     company["board_token"],
+            "", "",  # category, scope_tags — fill manually
+            "YES",
+            company.get("notes", "Auto-detected by ats_detector.py"),
+            company.get("job_count", ""), company.get("detected_date", ""),
+        ] for company in new_companies]
+        ws.append_rows(rows, value_input_option="RAW", insert_data_option="INSERT_ROWS", table_range="A1")
         for company in new_companies:
-            row_data = [
-                company["company_name"], company["career_url"],
-                company["ats_type"],     company["board_token"],
-                "", "",  # category, scope_tags — fill manually
-                "YES",
-                company.get("notes", "Auto-detected by ats_detector.py"),
-            ]
-            ws.update(f"A{next_row}:H{next_row}", [row_data])
             print(f"  ADDED: {company['company_name']} ({company['ats_type']}, token: {company['board_token']})")
-            next_row += 1
-            time.sleep(1)
 
-    print(f"\nGoogle Sheet updated:")
-    print(f"  New companies added:      {len(new_companies)}")
-    print(f"  Existing companies updated: {len(updated_companies)}")
+    print(f"\nGoogle Sheet updated (append-only):")
+    print(f"  New companies appended:        {len(new_companies)}")
+    print(f"  Existing rows with ATS change: {len(ats_changed)} (edit those rows by hand)")
 
 
 def main():

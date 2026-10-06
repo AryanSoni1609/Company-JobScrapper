@@ -1,8 +1,9 @@
 # companies_sheet_setup.py
-# One-time setup: Creates the "Companies" tab in your Google Sheet
-# and populates it with a starter list of 40 companies across 4 ATS platforms.
+# Setup: creates the "Companies" tab in your Google Sheet (if missing) and
+# appends a starter list of 40 companies across 4 ATS platforms.
 #
-# Run this ONCE when setting up a new Google Sheet.
+# Append-only: an existing tab is never deleted, cleared or overwritten —
+# re-running only appends starter companies that are not in the sheet yet.
 # After that, add companies via the "Companies to be added" queue tab.
 #
 # Usage:
@@ -12,16 +13,20 @@
 #   GOOGLE_SPREADSHEET_ID   — your Google Sheet ID
 #   GOOGLE_CREDENTIALS_PATH — path to service account JSON (default: google_credentials.json)
 
-import gspread
 import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from jobscraper.config import load_settings  # noqa: E402
+from jobscraper.sheets import COMPANY_HEADERS, AppendOnlySheets  # noqa: E402
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # ---------- CONFIG ----------
-CREDENTIALS_FILE = os.environ.get("GOOGLE_CREDENTIALS_PATH", "google_credentials.json")
-SPREADSHEET_ID   = os.environ.get("GOOGLE_SPREADSHEET_ID", "YOUR_SPREADSHEET_ID_HERE")
-SHEET_NAME       = "Companies"
+SETTINGS       = load_settings()
+SPREADSHEET_ID = SETTINGS.spreadsheet_id
+SHEET_NAME     = SETTINGS.companies_tab
 
 # ---------- COMPANY DATA ----------
 # Format: [company_name, career_url, ats_type, board_token, category, scope_tags, active, notes]
@@ -93,64 +98,46 @@ COMPANIES = [
 # ---------- MAIN ----------
 def main():
     print("=" * 60)
-    print("COMPANIES SHEET SETUP")
+    print("COMPANIES SHEET SETUP (append-only)")
     print("=" * 60)
 
-    if SPREADSHEET_ID == "YOUR_SPREADSHEET_ID_HERE":
-        print("\nERROR: GOOGLE_SPREADSHEET_ID environment variable is not set.")
-        print("Set it before running:")
-        print("  export GOOGLE_SPREADSHEET_ID=your_sheet_id_here")
-        print("  export GOOGLE_CREDENTIALS_PATH=path/to/google_credentials.json")
+    if SPREADSHEET_ID in ("", "YOUR_SPREADSHEET_ID_HERE", "your_spreadsheet_id_here"):
+        print("\nERROR: GOOGLE_SPREADSHEET_ID is not set.")
+        print("Set it in .env (copy .env.example) or export it before running:")
+        print("  GOOGLE_SPREADSHEET_ID=your_sheet_id_here")
+        print("  GOOGLE_CREDENTIALS_PATH=path/to/google_credentials.json")
         return
 
     print("\nConnecting to Google Sheets...")
     try:
-        gc           = gspread.service_account(filename=CREDENTIALS_FILE)
-        spreadsheet  = gc.open_by_key(SPREADSHEET_ID)
-        print(f"Connected to: {spreadsheet.title}")
+        sheets = AppendOnlySheets()
+        print(f"Connected to: {sheets.spreadsheet.title}")
     except Exception as e:
         print(f"ERROR connecting to Google Sheets: {e}")
         print("Make sure GOOGLE_CREDENTIALS_PATH is correct and the service account has access.")
         return
 
-    existing_sheets = [ws.title for ws in spreadsheet.worksheets()]
-    if SHEET_NAME in existing_sheets:
-        print(f"\nWARNING: '{SHEET_NAME}' tab already exists!")
-        response = input("Delete it and recreate? (yes/no): ").strip().lower()
-        if response != "yes":
-            print("Cancelled. No changes made.")
-            return
-        worksheet = spreadsheet.worksheet(SHEET_NAME)
-        spreadsheet.del_worksheet(worksheet)
-        print(f"Deleted existing '{SHEET_NAME}' tab.")
+    # The tab is created if missing; if it already exists nothing is deleted or
+    # overwritten — only starter companies that are not in the sheet yet are appended.
+    existing = sheets.company_names()
+    missing  = [row for row in COMPANIES if row[0].strip().lower() not in existing]
 
-    print(f"\nCreating '{SHEET_NAME}' tab...")
-    worksheet = spreadsheet.add_worksheet(title=SHEET_NAME, rows=200, cols=8)
+    print(f"\n'{SHEET_NAME}' tab: {len(COMPANIES) - len(missing)} starter companies already present.")
+    if not missing:
+        print("Nothing to add.")
+    else:
+        print(f"Appending {len(missing)} companies...")
+        sheets.append(SHEET_NAME, COMPANY_HEADERS, missing)
 
-    headers = ["company_name", "career_url", "ats_type", "board_token",
-               "category", "scope_tags", "active", "notes"]
-    worksheet.update(range_name="A1:H1", values=[headers])
+    active_count   = sum(1 for c in missing if c[6] == "YES")
+    disabled_count = sum(1 for c in missing if c[6] == "NO")
 
-    print(f"Adding {len(COMPANIES)} companies...")
-    if COMPANIES:
-        worksheet.update(range_name=f"A2:H{len(COMPANIES) + 1}", values=COMPANIES)
-
-    worksheet.format("A1:H1", {
-        "textFormat": {"bold": True},
-        "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
-    })
-
-    active_count   = sum(1 for c in COMPANIES if c[6] == "YES")
-    disabled_count = sum(1 for c in COMPANIES if c[6] == "NO")
-
-    print(f"\nDone! '{SHEET_NAME}' tab created with {len(COMPANIES)} companies.")
+    print(f"\nDone. Appended {len(missing)} companies.")
     print(f"  Active (will be scraped): {active_count}")
     print(f"  Disabled (unsupported ATS): {disabled_count}")
-    print(f"\nNext step: run the scraper!")
-    print(f"  python scraper/company_scraper.py")
-    print(f"\nTo add more companies later:")
-    print(f"  python setup/sheets_company_tabs.py --create-queue")
-    print(f"  python setup/sheets_company_tabs.py --process")
+    print(f"\nNext steps:")
+    print(f"  python -m jobscraper sync-companies   # add the LeetCode company list")
+    print(f"  python -m jobscraper scan             # scrape and append new jobs")
 
 
 if __name__ == "__main__":

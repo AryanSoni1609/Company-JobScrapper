@@ -12,7 +12,7 @@
 #                     - Checks for duplicates
 #                     - Runs ATS detection on each name
 #                     - Routes to "Companies" tab (active=YES) or "Companies with no ATS"
-#                     - Clears processed names from the queue automatically
+#                     - Never clears the queue: names already in the sheet are skipped
 #
 #   --all             Run all 3 steps
 #
@@ -34,6 +34,9 @@ import os
 from pathlib import Path
 import gspread
 from google.oauth2.service_account import Credentials
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import jobscraper.config  # noqa: E402,F401  -- loads .env into the environment
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SPREADSHEET_ID   = os.environ.get("GOOGLE_SPREADSHEET_ID", "YOUR_SPREADSHEET_ID_HERE")
@@ -164,7 +167,7 @@ def try_ashby(token):
     url = f"https://api.ashbyhq.com/posting-api/job-board/{token}"
     try:
         r    = requests.get(url, timeout=10)
-        jobs = r.json().get("jobPostings", []) if r.status_code == 200 else []
+        jobs = r.json().get("jobs", []) if r.status_code == 200 else []
         if len(jobs) >= MIN_JOBS:
             return token, f"https://jobs.ashbyhq.com/{token}", len(jobs)
     except Exception:
@@ -331,7 +334,7 @@ def process_queue(sh):
         print(f"\n  [{i+1}/{len(names_to_check)}] Checking: {name}")
 
         if name_lower in existing:
-            print(f"    → DUPLICATE — '{name}' already exists. Removing from queue.")
+            print(f"    → ALREADY ADDED — '{name}' exists in the sheet. Skipping.")
             to_remove.append(name)
             continue
 
@@ -356,21 +359,12 @@ def process_queue(sh):
         to_remove.append(name)
         time.sleep(1)
 
+    # Append-only: the queue tab is never cleared. Processed names stay in the
+    # queue and are skipped next time because they now exist in the
+    # Companies / Companies with no ATS tabs.
     if to_remove:
-        print(f"\n  Clearing {len(to_remove)} processed entries from queue tab...")
-        all_rows  = queue_ws.get_all_records()
-        remaining = [
-            r for r in all_rows
-            if str(r.get("company_name", "")).strip() not in to_remove
-        ]
-        queue_ws.clear()
-        queue_ws.append_row(["company_name"], value_input_option="RAW")
-        if remaining:
-            queue_ws.append_rows(
-                [[str(r.get("company_name", ""))] for r in remaining],
-                value_input_option="RAW"
-            )
-        print("  Queue tab cleared of processed entries.")
+        print(f"\n  Processed {len(to_remove)} queue entries (queue left untouched; "
+              "already-processed names are skipped on the next run).")
 
     print("\n  Processing complete.")
 
