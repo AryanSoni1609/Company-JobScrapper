@@ -13,7 +13,7 @@ from datetime import date
 from .ats_detect import detect_many
 from .config import load_settings
 from .leetcode import fetch_company_names
-from .sheets import COMPANY_HEADERS, AppendOnlySheets, SheetsNotConfigured
+from .sheets import COMPANY_HEADERS, JOB_HEADERS, AppendOnlySheets, SheetsNotConfigured
 from .state import State, now_iso
 
 log = logging.getLogger("jobscraper.pipeline")
@@ -92,4 +92,96 @@ def sync_companies(batch_size: int | None = None, names: list[str] | None = None
     }
     log.info("Company sync done: %d with ATS, %d without, %d remaining",
              len(found), len(missing), summary["remaining_for_next_sync"])
+    return summary
+
+
+def _scan_targets(sheets: AppendOnlySheets | None, state: State) -> list[dict]:
+    """Active companies from the sheet plus any detected locally but not on the sheet yet."""
+    targets: dict[str, dict] = {}
+    if sheets:
+        for c in sheets.active_companies():
+            targets[c["company_name"].lower()] = c
+    for c in state.active_companies():
+        targets.setdefault(c["company_name"].lower(), c)
+    return list(targets.values())
+
+
+def scan_jobs(company_filter: list[str] | None = None) -> dict:
+    """Scrape every active company, keep jobs matching job_preference.md and
+    append the new ones to the Jobs tab (de-duplicated by job URL)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .ats_clients import enrich_details, fetch_company_jobs
+    from .filters import evaluate, role_category
+    from .preferences import load_preferences
+
+    settings = load_settings()
+    state = State()
+    sheets = _sheets_or_none()
+    prefs = load_preferences()  # re-read every scan so edits apply immediately
+    log.info("Scan with preferences from %s: %s", prefs.source_path, prefs.summary())
+
+    companies = _scan_targets(sheets, state)
+    if company_filter:
+        wanted = {n.lower() for n in company_filter}
+        companies = [c for c in companies if c["company_name"].lower() in wanted]
+    if not companies:
+        return {"error": "No active companies. Run sync-companies (or setup/companies_sheet_setup.py) first."}
+
+    known = state.known_job_urls() | (sheets.job_urls() if sheets else set())
+
+    def fetch(c):
+        return c, fetch_company_jobs(c["company_name"], c["ats_type"], c["board_token"], prefs)
+
+    new_jobs, errors, scanned, total_postings = [], [], 0, 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for company, (jobs, status) in pool.map(fetch, companies):
+            if status != "OK":
+                errors.append(f"{company['company_name']}: {status}")
+                continue
+            scanned += 1
+            total_postings += len(jobs)
+            for job in jobs:
+                if not job["url"] or job["url"] in known:
+                    continue
+                keep, _reason, comp = evaluate(job, prefs)
+                if not keep:
+                    continue
+                enrich_details(job)
+                job["salary"] = comp.display if comp else "Not listed"
+                job["role_category"] = role_category(job["title"], prefs)
+                known.add(job["url"])
+                new_jobs.append(job)
+
+    today = date.today().isoformat()
+    rows = []
+    for job in new_jobs:
+        job.setdefault("match_score", "")
+        job.setdefault("matched_keywords", "")
+        job.setdefault("resume_file", "")
+        rows.append({
+            "date_added": today, "company": job["company"], "title": job["title"],
+            "role_category": job["role_category"], "location": job["location"],
+            "employment_type": job["employment_type"], "salary": job["salary"],
+            "date_posted": job["date_posted"], "ats": job["ats"], "job_url": job["url"],
+            "apply_url": job["apply_url"], "match_score": job["match_score"],
+            "matched_keywords": job["matched_keywords"], "resume_file": job["resume_file"],
+            "status": "New - apply via link", "job_id": job["job_id"],
+        })
+    if sheets and rows:
+        sheets.append(settings.jobs_tab, JOB_HEADERS, rows)
+    for job in new_jobs:
+        state.add_job(job, float(job["match_score"] or 0), job["resume_file"])
+
+    state.set_meta("last_scan", now_iso())
+    summary = {
+        "companies_scanned": scanned,
+        "postings_seen": total_postings,
+        "new_matching_jobs": len(new_jobs),
+        "errors": errors[:25],
+        "sheet_updated": bool(sheets and rows),
+        "new_jobs": [f"{j['company']}: {j['title']} ({j['location']})" for j in new_jobs[:50]],
+    }
+    log.info("Scan done: %d companies, %d postings, %d new matching jobs, %d errors",
+             scanned, total_postings, len(new_jobs), len(errors))
     return summary

@@ -2,6 +2,7 @@
 
 Commands:
     sync-companies   detect ATS for new LeetCode-list companies, append to sheet
+    scan             scrape active companies, append new matching jobs to the Jobs tab
     status           show local state counters and the active preferences
 """
 
@@ -23,6 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--batch-size", type=int, default=None, help="max companies to detect this run")
     p.add_argument("--all", action="store_true", help="detect every remaining company (slow)")
 
+    p = sub.add_parser("scan", help="scrape companies and append new matching jobs")
+    p.add_argument("--company", action="append", help="only scan this company (repeatable)")
+
     sub.add_parser("status", help="show state counters and preferences")
 
     args = parser.parse_args(argv)
@@ -31,6 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync-companies":
         from .pipeline import sync_companies
         result = sync_companies(batch_size=10_000 if args.all else args.batch_size)
+    elif args.command == "scan":
+        from .pipeline import scan_jobs
+        result = scan_jobs(company_filter=args.company)
     elif args.command == "status":
         from .preferences import load_preferences
         from .state import State
