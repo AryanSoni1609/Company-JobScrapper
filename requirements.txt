@@ -1,3 +1,18 @@
+# Core scraping + Google Sheets
+requests>=2.31.0
 gspread>=6.0.0
 google-auth>=2.0.0
-requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Gmail API (OAuth) — SMTP fallback needs nothing extra
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.2.0
+
+# Resume generation (DOCX)
+python-docx>=1.1.0
+docxtpl>=0.18.0
+
+# MCP server + scheduler
+mcp>=2.3,<3
+APScheduler>=3.10,<4
+tzdata>=2024.1
