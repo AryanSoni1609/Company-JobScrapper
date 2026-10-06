@@ -7,6 +7,7 @@ Commands:
     digest           email new companies/jobs + tailored resumes (use --dry-run to preview)
     nightly          scan, then send the digest (what the 21:00 schedule runs)
     gmail-auth       one-time Gmail OAuth consent (EMAIL_METHOD=gmail_api)
+    daemon           run forever: scans, company sync and the 21:00 digest on schedule
     make-template    write a starter Word template (templates/resume_template.docx)
     status           show local state counters and the active preferences
 """
@@ -45,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("nightly", help="scan then send the digest")
     sub.add_parser("gmail-auth", help="authorise Gmail sending (opens a browser)")
 
+    sub.add_parser("daemon", help="run the scheduler in the foreground")
+
     sub.add_parser("status", help="show state counters and preferences")
 
     args = parser.parse_args(argv)
@@ -79,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         from .notifier import gmail_credentials
         gmail_credentials(load_settings(), interactive=True)
         result = {"ok": True, "token_saved_to": str(load_settings().gmail_token_path)}
+    elif args.command == "daemon":
+        from .scheduler import run_forever
+        run_forever()
+        return 0
     elif args.command == "status":
         from .preferences import load_preferences
         from .state import State

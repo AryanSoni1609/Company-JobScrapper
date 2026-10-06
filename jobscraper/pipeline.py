@@ -80,6 +80,7 @@ def sync_companies(batch_size: int | None = None, names: list[str] | None = None
         state.record_company(r, source, added_to_sheet=bool(sheets))
 
     state.set_meta("last_company_sync", now_iso())
+    state.set_meta("company_sync_remaining", str(max(0, len(pending) - len(batch))))
     summary = {
         "names_in_source": len(all_names),
         "new_names": len(pending),
