@@ -229,3 +229,18 @@ def scan_jobs(company_filter: list[str] | None = None) -> dict:
     log.info("Scan done: %d companies, %d postings, %d new matching jobs, %d errors",
              scanned, total_postings, len(new_jobs), len(errors))
     return summary
+
+
+def run_nightly() -> dict:
+    """The 21:00 job: a fresh scan, then the Gmail digest of everything new."""
+    from .digest import send_digest
+
+    settings = load_settings()
+    result: dict = {}
+    try:
+        result["scan"] = scan_jobs()
+    except Exception as e:  # noqa: BLE001 — still send the digest of earlier scans
+        log.exception("Pre-digest scan failed")
+        result["scan"] = {"error": str(e)}
+    result["digest"] = send_digest(send_if_empty=settings.digest_send_empty)
+    return result

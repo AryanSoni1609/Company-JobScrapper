@@ -4,6 +4,9 @@ Commands:
     sync-companies   detect ATS for new LeetCode-list companies, append to sheet
     scan             scrape active companies, append new matching jobs to the Jobs tab
     tailor           (re)build the tailored resume for a tracked job URL
+    digest           email new companies/jobs + tailored resumes (use --dry-run to preview)
+    nightly          scan, then send the digest (what the 21:00 schedule runs)
+    gmail-auth       one-time Gmail OAuth consent (EMAIL_METHOD=gmail_api)
     make-template    write a starter Word template (templates/resume_template.docx)
     status           show local state counters and the active preferences
 """
@@ -35,6 +38,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("make-template", help="write a starter docxtpl Word template")
     p.add_argument("--path", default="templates/resume_template.docx")
 
+    p = sub.add_parser("digest", help="send the email digest now")
+    p.add_argument("--dry-run", action="store_true", help="write output/digest_preview.html, send nothing")
+    p.add_argument("--skip-if-empty", action="store_true", help="do not email when nothing is new")
+
+    sub.add_parser("nightly", help="scan then send the digest")
+    sub.add_parser("gmail-auth", help="authorise Gmail sending (opens a browser)")
+
     sub.add_parser("status", help="show state counters and preferences")
 
     args = parser.parse_args(argv)
@@ -58,6 +68,17 @@ def main(argv: list[str] | None = None) -> int:
         path = make_starter_template(path if path.is_absolute() else REPO_ROOT / path)
         result = {"template": str(path),
                   "next_step": f"Restyle it in Word, then set RESUME_TEMPLATE_PATH={args.path} in .env"}
+    elif args.command == "digest":
+        from .digest import send_digest
+        result = send_digest(send_if_empty=not args.skip_if_empty, dry_run=args.dry_run)
+    elif args.command == "nightly":
+        from .pipeline import run_nightly
+        result = run_nightly()
+    elif args.command == "gmail-auth":
+        from .config import load_settings
+        from .notifier import gmail_credentials
+        gmail_credentials(load_settings(), interactive=True)
+        result = {"ok": True, "token_saved_to": str(load_settings().gmail_token_path)}
     elif args.command == "status":
         from .preferences import load_preferences
         from .state import State

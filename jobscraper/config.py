@@ -64,6 +64,7 @@ class Settings:
     smtp_username: str
     smtp_app_password: str
     digest_max_attachments: int
+    digest_send_empty: bool
 
     # Schedule
     timezone: str
@@ -128,6 +129,7 @@ def load_settings() -> Settings:
         smtp_username=_env("SMTP_USERNAME"),
         smtp_app_password=_env("SMTP_APP_PASSWORD"),
         digest_max_attachments=_int("DIGEST_MAX_ATTACHMENTS", 15),
+        digest_send_empty=_env("DIGEST_SEND_EMPTY", "yes").lower() in ("yes", "true", "1", "on"),
         timezone=_env("TIMEZONE", "Asia/Kolkata"),
         digest_time=_env("DIGEST_TIME", "21:00"),
         scan_interval_hours=max(1, _int("SCAN_INTERVAL_HOURS", 6)),
