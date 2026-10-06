@@ -1,348 +1,311 @@
-# company-career-scraper
+# Company-JobScrapper
 
-**Scrape job postings from 169+ company career pages via Greenhouse, Lever, Ashby, and SmartRecruiters APIs — $0 cost, ~6 minute runtime, Google Sheets integration.**
+**Autonomous internship and job hunting: scrape company career pages, filter by an editable preferences file, tailor your resume to every job description, and get a Gmail digest at 9:00 PM IST. Runs as a CLI, a long-running daemon, or an MCP server.**
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![ATS Platforms](https://img.shields.io/badge/ATS_platforms-4-orange)
-![Companies](https://img.shields.io/badge/companies-169+-brightgreen)
+![Company source](https://img.shields.io/badge/companies-LeetCode_list_(470)_+_your_sheet-brightgreen)
 
 ---
 
-## The Problem
+## What it does
 
-Every company posts jobs on their own career page, but each uses a different platform — Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and dozens of others. Checking them one by one is slow, inconsistent, and easy to miss. Job boards like LinkedIn and Indeed help, but they're delayed, incomplete, and heavily gamed by agencies.
+- **Company list:** the companies in your Google Sheet, plus every company in
+  [liquidslr/leetcode-company-wise-problems](https://github.com/liquidslr/leetcode-company-wise-problems)
+  (470 today). Each company's ATS is detected automatically and the company is
+  appended to the sheet.
+- **Scraping:** free public job-board APIs for Greenhouse, Lever, Ashby and
+  SmartRecruiters. No browser automation, no API keys.
+- **Filtering:** driven by `job_preference.md`, which is re-read on every scan.
+  By default it keeps internships in technical roles (SDE, data, ML, ...) and
+  managerial roles (project, product and program management, business analyst,
+  operations, ...) in India or remote, paying around 8 LPA or more. Jobs that
+  don't list pay are kept.
+- **Google Sheets is append-only:** new companies, jobs and application updates
+  are only ever appended. Nothing is cleared, deleted or overwritten.
+- **Resume tailoring:** builds a DOCX for each job from your `resume_details.md`
+  (and optionally your own Word template). Your skills and bullet points are
+  re-ordered by how well they match the job description, a "Key skills for this
+  role" line is added, and you get a match score. Nothing is invented: the job's
+  keywords you don't have are listed in the email as suggestions instead.
+- **9:00 PM IST Gmail digest:** new companies, new jobs sorted by match score
+  (with pay, location and apply link), and the tailored resumes attached.
+- **Autonomous:** a scheduler scans every few hours, syncs companies nightly and
+  sends the digest. It runs on your PC (Windows Task Scheduler), a Linux server
+  (systemd or cron) or in Docker on any cloud host.
+- **MCP server:** every step is also a tool for Claude Desktop, Claude Code or
+  any MCP client.
 
-Going direct to source is better — but nobody has time to check 169 career pages manually.
-
-This tool solves that. One script queries all of them via their public APIs, filters by location and keywords, and outputs a single clean CSV — in about 6 minutes.
-
----
-
-## What It Does
-
-- Scrapes **169 company career pages** in ~6 minutes
-- Finds **3,200+ relevant jobs per run** (confirmed on last run: 2026-03-29)
-- Supports **4 major ATS platforms** — covers ~80% of tech and consulting companies
-- Filters by **location** (Germany / remote / EMEA) and **keywords** automatically
-- Company list managed via **Google Sheets** — add companies without touching code
-- **Auto-detection tool** finds any company's ATS platform from just its name
-- **$0 cost** — all free public APIs, no authentication, no scraping
-- **0 errors, 0 blocking** — API-based, not browser-based
-
----
-
-## How It Works
-
-Each of the 4 supported ATS platforms exposes a free, unauthenticated public JSON API. This is the same API that powers their embeddable job widgets used on company websites.
-
-The scraper:
-1. Reads the company list from a Google Sheet (so you can add companies without editing code)
-2. Calls the correct ATS API for each company
-3. Filters results by location keywords (Germany, remote, EMEA) and role keywords
-4. Deduplicates by URL across all companies
-5. Outputs a single CSV ready for downstream processing
-
-```
-Google Sheet           API Calls                   Output
-"Companies" tab   →    Greenhouse × N     →
-(169 companies)        Lever × N          →    raw_jobs_companies.csv
-active = YES           Ashby × N          →    (title, company, location,
-                       SmartRecruiters × N →    description, url, source)
-```
+> **About auto-applying.** Greenhouse, Lever, Ashby and SmartRecruiters only
+> accept applications through their APIs with the *employer's* private API
+> key, so this project does **not** submit applications for you. It does
+> everything up to that point: for each job, the digest has the apply link and
+> the tailored resume ready to upload, and `prepare_application` /
+> `mark_applied` track what you've submitted.
 
 ---
 
-## Supported ATS Platforms
+## How it works
 
-| ATS | API Endpoint | Returns | Coverage |
-|---|---|---|---|
-| **Greenhouse** | `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` | Full job descriptions | Most common for tech scaleups |
-| **Lever** | `api.lever.co/v0/postings/{token}?mode=json` | Full job descriptions | Common for growth-stage startups |
-| **Ashby** | `api.ashbyhq.com/posting-api/job-board/{token}` | Full job descriptions | Growing among AI/tech companies |
-| **SmartRecruiters** | `api.smartrecruiters.com/v1/companies/{token}/postings` | Job titles + metadata | Common for large corporates |
+```
+LeetCode repo (470 names) ─┐                       ┌─► Google Sheet (append-only)
+Google Sheet "Companies"  ─┼─► ATS detection ──────┤     Companies / Companies with no ATS
+                           │                       │     Jobs / Applications
+                           └─► Greenhouse/Lever/   │
+                               Ashby/SmartRecruiters ─► filter (job_preference.md)
+                                                         │
+                               resume_details.md ───────► tailored DOCX per job
+                                                         │
+                                         21:00 IST ─────► Gmail digest + resumes
+```
 
-All APIs are free, public, and require no API keys or authentication.
+State is kept in `data/state.db` (SQLite, gitignored), so every run is
+idempotent and the digest knows exactly what is new since the last email.
 
 ---
 
-## Quick Start
+## Quick start
 
-### Prerequisites
-- Python 3.10+
-- A Google Cloud project with Sheets API enabled
-- A Google service account with a downloaded JSON credentials file
-- A Google Sheet shared with your service account email
+### 1. Create the `jobs` virtual environment
 
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/YOUR_USERNAME/company-career-scraper.git
-cd company-career-scraper
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\setup_venv.ps1
+.\jobs\Scripts\Activate.ps1
 ```
 
-### 2. Install dependencies
-
 ```bash
-pip install -r requirements.txt
+# macOS / Linux
+bash scripts/setup_venv.sh
+source jobs/bin/activate
 ```
 
-### 3. Set up environment variables
+This installs the dependencies and copies the example files to your private,
+gitignored copies: `.env`, `job_preference.md` and `resume_details.md`.
+
+### 2. Fill in `.env`
+
+Every key is documented in [`.env.example`](.env.example). The important ones:
+
+| Key | What |
+|---|---|
+| `GOOGLE_SPREADSHEET_ID` | ID from your sheet URL `docs.google.com/spreadsheets/d/<ID>/edit` |
+| `GOOGLE_CREDENTIALS_PATH` | service-account JSON key. Share the sheet with its `client_email` as Editor |
+| `EMAIL_METHOD` | `gmail_api` (OAuth) or `smtp` (Gmail App Password) |
+| `NOTIFY_EMAIL_TO` / `NOTIFY_EMAIL_FROM` | where the digest goes / your Gmail address |
+| `GMAIL_CREDENTIALS_PATH` | OAuth "Desktop app" client JSON (for `gmail_api`) |
+| `SMTP_USERNAME` / `SMTP_APP_PASSWORD` | for `smtp`: create one at https://myaccount.google.com/apppasswords |
+| `DIGEST_TIME` / `TIMEZONE` | `21:00` / `Asia/Kolkata` |
+| `SCAN_INTERVAL_HOURS` | how often to scan (default 6) |
+| `RESUME_TEMPLATE_PATH` | optional Word template, see [templates/README.md](templates/README.md) |
+
+<details>
+<summary>Google Cloud setup (one time)</summary>
+
+1. In https://console.cloud.google.com create a project and enable the
+   **Google Sheets API**, **Google Drive API** and (for `gmail_api`) the **Gmail API**.
+2. **Sheets:** IAM & Admin → Service Accounts → create one → Keys → Add key → JSON.
+   Save it as `google_credentials.json` and share your sheet with the
+   service account's email (Editor).
+3. **Gmail (OAuth):** APIs & Services → OAuth consent screen (External, add
+   yourself as a test user) → Credentials → Create OAuth client ID → *Desktop
+   app*. Save it as `gmail_credentials.json`, then run:
+
+   ```bash
+   python -m jobscraper gmail-auth
+   ```
+
+   A browser opens once. The token is saved to `gmail_token.json` (gitignored)
+   and refreshed automatically after that. The app only asks for permission to
+   send email.
+4. **Or Gmail SMTP:** set `EMAIL_METHOD=smtp` and use an App Password
+   (requires 2-Step Verification).
+</details>
+
+### 3. Edit your preferences and resume details
+
+- `job_preference.md`: job types, technical/managerial role keywords,
+  excluded words, locations, minimum pay (`minimum_lpa: 8`, `tolerance_percent: 10`),
+  whether to keep jobs that don't list pay, and the maximum posting age. The
+  format is explained inside the file.
+- `resume_details.md`: your real resume content (see
+  [`resume_details.example.md`](resume_details.example.md) for the structure).
+
+### 4. Run it
 
 ```bash
-cp .env.example .env
-# Edit .env and fill in your GOOGLE_SPREADSHEET_ID and GOOGLE_CREDENTIALS_PATH
+python -m jobscraper status                    # check configuration
+python setup/companies_sheet_setup.py          # optional: 40 starter companies
+python -m jobscraper sync-companies            # add LeetCode-list companies (60 per run)
+python -m jobscraper scan                      # find jobs, tailor resumes, append to sheet
+python -m jobscraper digest --dry-run          # preview the email in output/digest_preview.html
+python -m jobscraper digest                    # send it now
+python -m jobscraper daemon                    # run everything on schedule
 ```
-
-Or export directly:
-
-```bash
-export GOOGLE_SPREADSHEET_ID=your_spreadsheet_id_here
-export GOOGLE_CREDENTIALS_PATH=/path/to/google_credentials.json
-```
-
-### 4. Create the Companies tab in your Google Sheet
-
-```bash
-python setup/companies_sheet_setup.py
-```
-
-This creates a "Companies" tab with 40 starter companies across all 4 ATS platforms.
-
-### 5. Run the scraper
-
-```bash
-python scraper/company_scraper.py
-```
-
-Output: `output/raw_jobs_companies.csv`
 
 ---
 
-## Adding Companies
+## Commands
 
-### Method 1 — Queue tab (recommended, no code needed)
+| Command | What it does |
+|---|---|
+| `python -m jobscraper status` | counts, last run times, active preferences |
+| `python -m jobscraper sync-companies [--batch-size N \| --all]` | detect ATS for new LeetCode-list companies and append them |
+| `python -m jobscraper scan [--company NAME]` | scrape, filter, tailor resumes, append new jobs |
+| `python -m jobscraper tailor <job_url>` | rebuild the tailored resume for one tracked job |
+| `python -m jobscraper make-template` | write a starter Word template to restyle |
+| `python -m jobscraper digest [--dry-run] [--skip-if-empty]` | send (or preview) the email digest |
+| `python -m jobscraper nightly` | scan, then digest (what 21:00 runs) |
+| `python -m jobscraper gmail-auth` | one-time Gmail OAuth consent |
+| `python -m jobscraper daemon` | run the scheduler in the foreground |
+| `python -m jobscraper serve [--transport stdio\|streamable-http] [--with-scheduler]` | MCP server |
 
-1. Go to your Google Sheet → open the "Companies to be added" tab
-2. Type company names in column A (one per row — just the name)
-3. Run:
+---
 
-```bash
-python setup/sheets_company_tabs.py --process
+## MCP server
+
+Tools: `get_status`, `get_job_preferences`, `update_job_preferences`,
+`sync_companies`, `add_companies`, `scan_jobs`, `list_jobs`,
+`get_job_description`, `tailor_resume`, `prepare_application`, `mark_applied`,
+`send_digest`, `run_nightly`.
+
+**Claude Desktop / Claude Code (stdio).** Add this to the client's MCP config
+(adjust paths; see [`deploy/claude_mcp_config.example.json`](deploy/claude_mcp_config.example.json)):
+
+```json
+{
+  "mcpServers": {
+    "jobscraper": {
+      "command": "D:\\Company-JobScrapper\\jobs\\Scripts\\python.exe",
+      "args": ["-m", "jobscraper", "serve"],
+      "cwd": "D:\\Company-JobScrapper"
+    }
+  }
+}
 ```
 
-The script automatically detects which ATS each company uses, finds the correct board token, and routes it to the right tab. You just need the company name.
+For Claude Code you can also run
+`claude mcp add jobscraper -- D:\Company-JobScrapper\jobs\Scripts\python.exe -m jobscraper serve`.
 
-### Method 2 — Manual entry
+**Fully autonomous server:**
+`python -m jobscraper serve --transport streamable-http --with-scheduler` serves
+MCP at `http://127.0.0.1:8765/mcp` and runs the scans, company sync and
+21:00 IST digest by itself. Only one scheduler runs per machine, so this is
+safe next to `daemon`.
 
-Add a row directly to the "Companies" tab in Google Sheets:
+---
 
-| Column | Value | Example |
+## Hosting: keep it running
+
+| Where | How |
+|---|---|
+| **Your Windows PC** | `powershell -ExecutionPolicy Bypass -File scripts\install_windows_task.ps1` adds a Task Scheduler task that starts the daemon at logon with no window, wakes the PC at 20:55 for the digest, and restarts it if it crashes. Remove it with `-Uninstall`. |
+| **Any terminal** | `scripts\run_daemon.ps1` / `scripts/run_daemon.sh` |
+| **Linux server / VM** | `deploy/jobscraper.service` (systemd, instructions inside) or `deploy/crontab.example` |
+| **Cloud (Docker)** | `docker compose up -d`. Mount `.env`, the credential JSONs and your two markdown files (see `docker-compose.yml`). Create `gmail_token.json` locally with `gmail-auth` first, then copy it to the server. |
+
+If the machine is off at 21:00, the digest is sent as soon as the scheduler
+starts again that day. Logs go to `logs/jobscraper.log`.
+
+---
+
+## Google Sheet tabs
+
+| Tab | Written by | Columns |
 |---|---|---|
-| company_name | Company name | Celonis |
-| career_url | Their careers page URL | https://www.celonis.com/careers/ |
-| ats_type | greenhouse / lever / ashby / smartrecruiters | greenhouse |
-| board_token | Token from the ATS URL | celonis |
-| category | Optional label | AI Startup |
-| scope_tags | Optional tags | GenAI, BI |
-| active | YES or NO | YES |
-| notes | Optional | Confirmed |
+| **Companies** | setup script, queue processor, LeetCode sync | company_name, career_url, ats_type, board_token, category, scope_tags, active, notes, job_count, detected_date |
+| **Companies with no ATS** | sync / queue | same as Companies (`active = NO`) |
+| **Companies to be added** | you | company_name (processed by `setup/sheets_company_tabs.py --process`, never cleared) |
+| **Jobs** | `scan` | date_added, company, title, role_category, location, employment_type, salary, date_posted, ats, job_url, apply_url, match_score, matched_keywords, resume_file, status, job_id |
+| **Applications** | `prepare_application`, `mark_applied` | timestamp, company, title, status, job_url, apply_url, resume_file, note |
 
-Set `active = YES` and the scraper picks it up on the next run.
-
-### Finding a board token
-
-Go to the company's careers page and click any job listing. The URL reveals the ATS and token:
-
-| URL pattern | ATS | Token |
-|---|---|---|
-| `boards.greenhouse.io/{token}/jobs/...` | Greenhouse | the part after `/boards/` |
-| `job-boards.eu.greenhouse.io/{token}/...` | Greenhouse (EU) | the part after `/eu.greenhouse.io/` |
-| `jobs.lever.co/{token}/...` | Lever | the part after `/lever.co/` |
-| `jobs.ashbyhq.com/{token}/...` | Ashby | the part after `/ashbyhq.com/` |
-| `careers.smartrecruiters.com/{token}/...` | SmartRecruiters | the part after `/smartrecruiters.com/` |
-
-If the job opens as a popup on the company's own domain with no ATS URL visible — the ATS is unsupported (likely Workday or SuccessFactors). Set `active = NO`.
+To stop scraping a company, set `active = NO` yourself. The scraper never edits
+existing rows. If a company's ATS changes, the detector reports it so you can
+fix that row by hand.
 
 ---
 
-## ATS Auto-Detection
-
-`ats_detector.py` finds which ATS a company uses automatically — no manual URL hunting required.
-
-```bash
-# Create a CSV with company names (one per line)
-echo "Celonis
-DeepL
-N26
-Mistral AI" > companies_to_check.csv
-
-# Run detection
-python scraper/ats_detector.py --input companies_to_check.csv
-```
-
-The detector:
-- Generates ~15 token variations per company name (lowercase, CamelCase, hyphenated, suffix-stripped, etc.)
-- Tests each variation against all 4 ATS APIs
-- Requires at least 1 real job returned to count as a match (eliminates SmartRecruiters false positives)
-- Saves results to `output/ats_detection_results.csv` immediately
-- Uploads confirmed companies directly to your Google Sheet
-
-Other flags:
-
-```bash
-python scraper/ats_detector.py --skip-sheets   # CSV output only, no Sheet upload
-python scraper/ats_detector.py --recheck       # Re-check companies already in history
-```
-
----
-
-## Google Sheets Structure
-
-The "Companies" tab has 8 columns:
-
-| Column | Field | Description |
-|---|---|---|
-| A | company_name | e.g. "Celonis" |
-| B | career_url | Company careers page (for reference) |
-| C | ats_type | greenhouse / lever / ashby / smartrecruiters |
-| D | board_token | Token used in the ATS API URL |
-| E | category | Optional: AI Startup / Corporate / International / Consulting |
-| F | scope_tags | Optional: role types this company typically hires for |
-| G | active | YES = scrape this company, NO = skip |
-| H | notes | Free text — verification status, quirks, etc. |
-
-Additional tabs managed by `sheets_company_tabs.py`:
-
-- **"Companies with no ATS"** — companies checked but no supported ATS found (~Workday/SuccessFactors)
-- **"Companies to be added"** — queue tab where you write new company names
-
----
-
-## Configuration
-
-Edit the keyword lists in `scraper/company_scraper.py` to match your target roles and locations:
-
-```python
-# Role keywords — broad by design (companies are pre-filtered for relevance)
-SEARCH_KEYWORDS = [
-    "ai", "strategy", "digital", "transformation", "analytics", "data",
-    "consultant", "operations", "product", "manager", "associate", ...
-]
-
-# Location keywords — adjust for your target country/region
-GERMANY_LOCATIONS = [
-    "germany", "berlin", "munich", "hamburg", "frankfurt", "remote", "emea", ...
-]
-```
-
----
-
-## Project Structure
+## Project structure
 
 ```
-company-career-scraper/
-├── README.md                          # this file
-├── .env.example                       # environment variable template
-├── .gitignore                         # excludes credentials and output files
-├── LICENSE                            # MIT
-├── requirements.txt                   # Python dependencies
-│
-├── scraper/
-│   ├── company_scraper.py             # main scraper — reads from Google Sheet, scrapes all 4 ATS
-│   └── ats_detector.py                # auto-detect ATS platform + token for any company
-│
+Company-JobScrapper/
+├── README.md  agents.md  skills.md        # docs (agents.md = rules for an AI operator)
+├── .env.example                            # every setting, documented
+├── job_preference.example.md               # → job_preference.md (yours, gitignored)
+├── resume_details.example.md               # → resume_details.md (yours, gitignored)
+├── requirements.txt  Dockerfile  docker-compose.yml
+├── jobscraper/                             # the package (python -m jobscraper ...)
+│   ├── config.py        settings from .env
+│   ├── preferences.py   job_preference.md parser
+│   ├── compensation.py  LPA / stipend / hourly pay → INR per year
+│   ├── filters.py       job-type, role, location, pay, age checks
+│   ├── ats_clients.py   Greenhouse / Lever / Ashby / SmartRecruiters fetchers
+│   ├── ats_detect.py    company name → ATS + board token
+│   ├── leetcode.py      LeetCode company list
+│   ├── sheets.py        append-only Google Sheets helper
+│   ├── state.py         SQLite state (data/state.db)
+│   ├── pipeline.py      sync / scan / nightly orchestration
+│   ├── resume/          parser, keyword extraction, tailoring, DOCX rendering
+│   ├── notifier.py      Gmail API / SMTP
+│   ├── digest.py        the 21:00 email
+│   ├── scheduler.py     APScheduler jobs (Asia/Kolkata)
+│   └── mcp_server.py    MCP tools
+├── scraper/                                # original standalone scripts (still work)
+│   ├── company_scraper.py   one-off scrape → output/raw_jobs_companies.csv
+│   └── ats_detector.py      detect ATS for a CSV of names
 ├── setup/
-│   ├── companies_sheet_setup.py       # one-time Google Sheet setup (creates Companies tab)
-│   └── sheets_company_tabs.py         # manage queue tab + "Companies with no ATS" tab
-│
-└── output/                            # generated at runtime, gitignored
-    ├── raw_jobs_companies.csv         # scraper output
-    ├── ats_detection_results.csv      # results from last ats_detector run
-    └── ats_detection_history.csv      # permanent record of all companies checked
+│   ├── companies_sheet_setup.py   create Companies tab / append starter companies
+│   └── sheets_company_tabs.py     "Companies to be added" queue + no-ATS tab
+├── scripts/      setup_venv.{ps1,sh}, run_daemon.{ps1,sh}, install_windows_task.ps1
+├── deploy/       systemd unit, crontab example, MCP client config example
+├── templates/    README for Word templates (your template is gitignored)
+├── tests/        offline unit tests: python -m unittest discover -s tests
+└── data/ output/ resumes/ logs/            # runtime, gitignored (.gitkeep only)
 ```
 
 ---
 
-## API Reference
+## Supported ATS APIs
 
-### Greenhouse
+| ATS | Endpoint | Notes |
+|---|---|---|
+| **Greenhouse** | `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` | full descriptions; EU boards at `boards-api.eu.greenhouse.io` |
+| **Lever** | `api.lever.co/v0/postings/{token}?mode=json` | full descriptions, `salaryRange` when published; EU at `api.eu.lever.co` |
+| **Ashby** | `api.ashbyhq.com/posting-api/job-board/{token}?includeCompensation=true` | tokens are case-sensitive (`DeepL`), compensation when published |
+| **SmartRecruiters** | `api.smartrecruiters.com/v1/companies/{token}/postings` | descriptions fetched per posting for jobs that pass the filter |
 
-```
-GET https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true
-```
+Many large companies on the LeetCode list (Amazon, Google, Microsoft, Goldman
+Sachs, ...) use Workday, SuccessFactors, iCIMS or their own career sites.
+Those have no public job API, so they land in **Companies with no ATS**.
 
-Returns JSON with `jobs` array. Each job includes `title`, `location.name`, `content` (HTML description), `absolute_url`, `updated_at`. No authentication required.
-
-EU endpoint: `https://job-boards.eu.greenhouse.io/{token}/jobs`
-
-### Lever
-
-```
-GET https://api.lever.co/v0/postings/{token}?mode=json
-```
-
-Returns a JSON array. Each posting includes `text` (title), `categories.location`, `lists` (description sections), `hostedUrl`. No authentication required.
-
-### Ashby
-
-```
-GET https://api.ashbyhq.com/posting-api/job-board/{token}
-```
-
-Official REST API (documented by Ashby, updated March 2025). Returns JSON with `jobs` array. Each job includes `title`, `location`, `descriptionHtml`, `jobUrl`. No authentication required.
-
-**Note:** Tokens are case-sensitive. `DeepL` works; `deepl` does not. Always copy the token exactly from the URL at `jobs.ashbyhq.com/{token}`.
-
-### SmartRecruiters
-
-```
-GET https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100&offset=0
-```
-
-Returns paginated JSON with `content` array and `totalFound`. Each posting includes `name` (title), `location`, `releasedDate`. Descriptions are limited — jobs still get returned but with less text than other ATS platforms.
-
-**Known quirk:** SmartRecruiters returns HTTP 200 with 0 jobs for any company name, even invalid ones. The detector requires at least 1 real job returned to count as a match.
-
----
-
-## Known Quirks & Gotchas
-
-These are real issues encountered while building and running this scraper across 169 companies:
+## Known quirks
 
 | Issue | Details |
 |---|---|
-| **Ashby tokens are case-sensitive** | `DeepL` works, `deepl` does not. `AlephAlpha` works, `alephalpha` does not. Always copy from `jobs.ashbyhq.com/{token}` URL. |
-| **Some tokens include .com suffix** | Example: a company embedding Ashby on their own domain may have token `company.com` not `company`. Check `jobs.ashbyhq.com/` if standard name fails. |
-| **SmartRecruiters false positives** | Returns HTTP 200 + 0 jobs for any company name. Fixed by requiring `MIN_JOBS_REQUIRED = 1`. |
-| **Some legal names differ from brand names** | Miro's Greenhouse token is `realtimeboardglobal` (legal name: RealtimeBoard). Long corporate tokens exist (e.g. `capgeminideutschlandgmbh`). |
-| **Companies switch ATS** | Companies migrate between platforms. Use `ats_detector.py --recheck` periodically to catch switches. |
-| **Custom popup career pages** | Some companies (e.g. Trade Republic, Zalando) open job listings as modal popups on their own domain. No ATS URL is exposed — these cannot be scraped via API. Set `active = NO`. |
-| **Workday / SAP SuccessFactors** | These ATS platforms don't have public APIs. They require browser-based scraping (Playwright). Not yet implemented — see Roadmap. |
-| **Greenhouse EU endpoint** | Some companies use `job-boards.eu.greenhouse.io` instead of the standard `boards-api.greenhouse.io`. The detector tries both. |
-| **Duplicate tokens** | If the same company name is added twice with different casing, two rows may appear in the sheet. The scraper deduplicates by job URL so no jobs are double-counted. |
+| Ashby tokens are case-sensitive | `DeepL` works and `deepl` does not. The fetcher tries common casings. |
+| SmartRecruiters false positives | It returns HTTP 200 with 0 jobs for any name, so detection requires at least 1 job. |
+| Legal vs brand names | e.g. Miro's Greenhouse token is `realtimeboardglobal`. Add such companies manually. |
+| Companies switch ATS | Re-check with `python scraper/ats_detector.py --input names.csv --recheck --skip-sheets`. |
+| Pay is rarely published | Unlisted pay is kept by default (`include_unknown_salary: yes`). Stipends are annualised (×12) before comparing with `minimum_lpa`. |
 
 ---
 
-## Roadmap
+## Testing
 
-- **Phase B — Workday / SAP SuccessFactors** (Playwright browser scraping)
-  Target: up to 30 large corporates not reachable via API
-- **More ATS integrations** — iCIMS, Cornerstone, Personio (if APIs become available)
-- **Scheduled runs** — integration guide for n8n, GitHub Actions, cron
+```bash
+python -m unittest discover -s tests -v
+```
 
----
-
-## About
-
-Built as part of a larger job application automation pipeline. The scraper was designed to be a standalone, reusable component — anyone targeting a concentrated set of companies in a specific market can adapt the keyword and location filters for their use case.
-
-**Author:** Babak Hasani — [linkedin.com/in/babak-hasani](https://www.linkedin.com/in/babak-hasani/)
-
-Part of a larger pipeline: [job-automation-pipeline](https://github.com/YOUR_USERNAME/job-automation-pipeline) *(coming soon)*
+The tests run offline. They cover preferences, pay parsing, filtering, the
+append-only sheet guarantee, resume tailoring and digest bookkeeping.
 
 ---
 
-## License
+## Credits & license
 
-MIT — see [LICENSE](LICENSE)
+Originally built by Babak Hasani as a standalone career-page scraper. Extended
+with LeetCode-list company sync, preference-driven filtering, resume
+tailoring, the Gmail digest, scheduling and the MCP server.
+
+MIT, see [LICENSE](LICENSE).
